@@ -19,7 +19,7 @@ MODEL_PATH = "best_resnet18_pharyngitis.pth"
 HTML_PATH = "pharyscan_web_app.html"
 
 # ==============================
-# Google Drive model link/file id
+# Google Drive model file
 # ==============================
 GOOGLE_DRIVE_FILE_ID = "14w1GyW0AYpy2voanbTRG-6of0jSsMRtQ"
 GOOGLE_DRIVE_LINK = "https://drive.google.com/file/d/14w1GyW0AYpy2voanbTRG-6of0jSsMRtQ/view?usp=drive_link"
@@ -30,14 +30,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # ==============================
-# Download model from Google Drive
+# Google Drive helper
 # ==============================
 def extract_drive_file_id(link):
-    """
-    Supports links like:
-    https://drive.google.com/file/d/FILE_ID/view?usp=sharing
-    https://drive.google.com/open?id=FILE_ID
-    """
     if not link:
         return None
 
@@ -67,23 +62,28 @@ def download_model_if_needed():
             file_id = extracted_id
 
     if not file_id:
-        raise ValueError(
-            "Google Drive file ID is missing. "
-            "Please set GOOGLE_DRIVE_FILE_ID or GOOGLE_DRIVE_LINK in app.py."
-        )
+        raise ValueError("Google Drive file ID is missing.")
 
     url = f"https://drive.google.com/uc?id={file_id}"
 
     print("Downloading model from Google Drive...")
-    output = gdown.download(url, MODEL_PATH, quiet=False)
+    output = gdown.download(url, MODEL_PATH, quiet=False, fuzzy=True)
 
     if output is None or not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(
-            "Model download failed. Make sure Google Drive sharing is set to: "
-            "Anyone with the link → Viewer."
+            "Model download failed. Set Google Drive sharing to: Anyone with the link → Viewer."
         )
 
-    print("Model downloaded successfully.")
+    file_size = os.path.getsize(MODEL_PATH)
+
+    if file_size < 1000000:
+        raise RuntimeError(
+            "Downloaded file is too small. Google Drive may have downloaded an error page instead of the model. "
+            "Check sharing permission: Anyone with the link → Viewer."
+        )
+
+    print(f"Model downloaded successfully: {MODEL_PATH}")
+    print(f"Model size: {round(file_size / (1024 * 1024), 2)} MB")
 
 
 # ==============================
@@ -96,19 +96,16 @@ model.fc = nn.Linear(model.fc.in_features, len(CLASS_NAMES))
 
 checkpoint = torch.load(MODEL_PATH, map_location=device)
 
-# If model was saved as state_dict
 if isinstance(checkpoint, dict):
     try:
         model.load_state_dict(checkpoint)
     except RuntimeError:
-        # Fix for models saved with "module." prefix
         new_checkpoint = {}
         for k, v in checkpoint.items():
             new_key = k.replace("module.", "")
             new_checkpoint[new_key] = v
         model.load_state_dict(new_checkpoint)
 else:
-    # If full model was saved
     model = checkpoint
 
 model.to(device)
@@ -119,7 +116,7 @@ print("Device:", device)
 
 
 # ==============================
-# Image transform
+# Image preprocessing
 # ==============================
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -136,7 +133,20 @@ transform = transforms.Compose([
 # ==============================
 @app.route("/")
 def home():
+    if not os.path.exists(HTML_PATH):
+        return jsonify({"error": f"{HTML_PATH} not found"}), 404
+
     return send_file(HTML_PATH)
+
+
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "running",
+        "model_exists": os.path.exists(MODEL_PATH),
+        "html_exists": os.path.exists(HTML_PATH),
+        "device": str(device)
+    })
 
 
 @app.route("/predict", methods=["POST"])
