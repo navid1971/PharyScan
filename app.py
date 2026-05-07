@@ -1,22 +1,96 @@
 import os
-import io
+import re
+import gdown
 import torch
 import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
+
 from PIL import Image
 from flask import Flask, request, jsonify, send_file
 
+
 app = Flask(__name__)
 
+# ==============================
+# File paths
+# ==============================
 MODEL_PATH = "best_resnet18_pharyngitis.pth"
 HTML_PATH = "pharyscan_web_app.html"
+
+# ==============================
+# Google Drive model link/file id
+# ==============================
+# Option 1: Paste only the Google Drive file ID here
+GOOGLE_DRIVE_FILE_ID = "PASTE_YOUR_FILE_ID_HERE"
+
+# Option 2: Or paste full Drive link here
+GOOGLE_DRIVE_LINK = ""
 
 CLASS_NAMES = ["no_pharyngitis", "pharyngitis"]
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Load ResNet18 model
+
+# ==============================
+# Download model from Google Drive
+# ==============================
+def extract_drive_file_id(link):
+    """
+    Supports links like:
+    https://drive.google.com/file/d/FILE_ID/view?usp=sharing
+    https://drive.google.com/open?id=FILE_ID
+    """
+    if not link:
+        return None
+
+    patterns = [
+        r"/file/d/([^/]+)",
+        r"id=([^&]+)"
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, link)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def download_model_if_needed():
+    if os.path.exists(MODEL_PATH):
+        print(f"Model already exists: {MODEL_PATH}")
+        return
+
+    file_id = GOOGLE_DRIVE_FILE_ID
+
+    if GOOGLE_DRIVE_LINK:
+        extracted_id = extract_drive_file_id(GOOGLE_DRIVE_LINK)
+        if extracted_id:
+            file_id = extracted_id
+
+    if not file_id or file_id == "PASTE_YOUR_FILE_ID_HERE":
+        raise ValueError(
+            "Google Drive file ID is missing. "
+            "Please set GOOGLE_DRIVE_FILE_ID or GOOGLE_DRIVE_LINK in app.py."
+        )
+
+    url = f"https://drive.google.com/uc?id={file_id}"
+
+    print("Downloading model from Google Drive...")
+    gdown.download(url, MODEL_PATH, quiet=False)
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError("Model download failed.")
+
+    print("Model downloaded successfully.")
+
+
+# ==============================
+# Load model
+# ==============================
+download_model_if_needed()
+
 model = models.resnet18(weights=None)
 model.fc = nn.Linear(model.fc.in_features, len(CLASS_NAMES))
 
@@ -40,6 +114,13 @@ else:
 model.to(device)
 model.eval()
 
+print("Model loaded successfully.")
+print("Device:", device)
+
+
+# ==============================
+# Image transform
+# ==============================
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -49,9 +130,14 @@ transform = transforms.Compose([
     )
 ])
 
+
+# ==============================
+# Routes
+# ==============================
 @app.route("/")
 def home():
     return send_file(HTML_PATH)
+
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -74,6 +160,9 @@ def predict():
         predicted_class = CLASS_NAMES[predicted_idx.item()]
         confidence_score = round(confidence.item() * 100, 2)
 
+        no_pharyngitis_score = round(probabilities[0].item() * 100, 2)
+        pharyngitis_score = round(probabilities[1].item() * 100, 2)
+
         return jsonify({
             "prediction": predicted_class,
             "class": predicted_class,
@@ -81,21 +170,24 @@ def predict():
             "confidence": confidence_score,
             "confidence_score": confidence_score,
             "probabilities": {
-                CLASS_NAMES[0]: round(probabilities[0].item() * 100, 2),
-                CLASS_NAMES[1]: round(probabilities[1].item() * 100, 2)
+                "no_pharyngitis": no_pharyngitis_score,
+                "pharyngitis": pharyngitis_score
             }
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/api/predict", methods=["POST"])
 def api_predict():
     return predict()
 
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     return predict()
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
