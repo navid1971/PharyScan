@@ -21,11 +21,8 @@ HTML_PATH = "pharyscan_web_app.html"
 # ==============================
 # Google Drive model link/file id
 # ==============================
-# Option 1: Paste only the Google Drive file ID here
-GOOGLE_DRIVE_FILE_ID = "PASTE_YOUR_FILE_ID_HERE"
-
-# Option 2: Or paste full Drive link here
-GOOGLE_DRIVE_LINK = ""
+GOOGLE_DRIVE_FILE_ID = "14w1GyW0AYpy2voanbTRG-6of0jSsMRtQ"
+GOOGLE_DRIVE_LINK = "https://drive.google.com/file/d/14w1GyW0AYpy2voanbTRG-6of0jSsMRtQ/view?usp=drive_link"
 
 CLASS_NAMES = ["no_pharyngitis", "pharyngitis"]
 
@@ -69,7 +66,7 @@ def download_model_if_needed():
         if extracted_id:
             file_id = extracted_id
 
-    if not file_id or file_id == "PASTE_YOUR_FILE_ID_HERE":
+    if not file_id:
         raise ValueError(
             "Google Drive file ID is missing. "
             "Please set GOOGLE_DRIVE_FILE_ID or GOOGLE_DRIVE_LINK in app.py."
@@ -78,10 +75,13 @@ def download_model_if_needed():
     url = f"https://drive.google.com/uc?id={file_id}"
 
     print("Downloading model from Google Drive...")
-    gdown.download(url, MODEL_PATH, quiet=False)
+    output = gdown.download(url, MODEL_PATH, quiet=False)
 
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError("Model download failed.")
+    if output is None or not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            "Model download failed. Make sure Google Drive sharing is set to: "
+            "Anyone with the link → Viewer."
+        )
 
     print("Model downloaded successfully.")
 
@@ -187,6 +187,7 @@ def api_predict():
 @app.route("/analyze", methods=["POST"])
 def analyze():
     return predict()
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
